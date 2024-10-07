@@ -1,5 +1,5 @@
 use std::{
-    error, fmt, mem,
+    error, fmt,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::{
-    context::{Context, Cx},
+    context::{internal::Env, Context, Cx},
     result::{NeonResult, ResultExt, Throw},
-    sys::{raw::Env, tsfn::ThreadsafeFunction},
+    sys::{self, tsfn::ThreadsafeFunction},
 };
 
 #[cfg(feature = "futures")]
@@ -44,7 +44,7 @@ mod oneshot {
     }
 }
 
-type Callback = Box<dyn FnOnce(Env) + Send + 'static>;
+type Callback = Box<dyn FnOnce(sys::Env) + Send + 'static>;
 
 /// Channel for scheduling Rust closures to execute on the JavaScript main thread.
 ///
@@ -75,13 +75,11 @@ type Callback = Box<dyn FnOnce(Env) + Send + 'static>;
 ///         // loop. This _will_ block the event loop while executing.
 ///         channel.send(move |mut cx| {
 ///             let callback = callback.into_inner(&mut cx);
-///             let this = cx.undefined();
-///             let args = vec![
-///                 cx.null().upcast::<JsValue>(),
-///                 cx.number(result).upcast(),
-///             ];
 ///
-///             callback.call(&mut cx, this, args)?;
+///             callback
+///                 .bind(&mut cx)
+///                 .args(((), result))?
+///                 .exec()?;
 ///
 ///             Ok(())
 ///         });
@@ -159,7 +157,7 @@ impl Channel {
     {
         let (tx, rx) = oneshot::channel();
         let callback = Box::new(move |env| {
-            let env = unsafe { mem::transmute(env) };
+            let env = Env::from(env);
 
             // Note: It is sufficient to use `Cx` because
             // N-API creates a `HandleScope` before calling the callback.
@@ -409,7 +407,7 @@ impl ChannelState {
     }
 
     // Monomorphized trampoline funciton for calling the user provided closure
-    fn callback(env: Option<Env>, callback: Callback) {
+    fn callback(env: Option<sys::Env>, callback: Callback) {
         if let Some(env) = env {
             callback(env);
         } else {

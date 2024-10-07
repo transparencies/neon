@@ -1,4 +1,7 @@
-use neon::{prelude::*, types::extract::Error};
+use neon::{
+    prelude::*,
+    types::extract::{Boxed, Error},
+};
 
 #[neon::export]
 const NUMBER: u8 = 42;
@@ -87,4 +90,24 @@ fn sleep_task(ms: f64) {
     use std::{thread, time::Duration};
 
     thread::sleep(Duration::from_millis(ms as u64));
+}
+
+#[neon::export]
+fn number_with_cx<'cx>(cx: &mut Cx<'cx>, n: f64) -> Handle<'cx, JsNumber> {
+    cx.number(n)
+}
+
+#[neon::export]
+fn simple_self(this: Handle<JsObject>) -> Handle<JsObject> {
+    this
+}
+
+#[neon::export]
+fn boxed_self(Boxed(this): Boxed<String>) -> String {
+    this
+}
+
+#[neon::export]
+fn boxed_string(s: String) -> Boxed<String> {
+    Boxed(s)
 }

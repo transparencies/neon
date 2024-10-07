@@ -6,7 +6,9 @@
 /// This attribute should only be used _once_ in a module and will
 /// be called each time the module is initialized in a context.
 ///
-/// If a `main` function is not provided, all registered exports will be exported.
+/// If a `main` function is not provided, all registered exports will be exported. If
+/// the `tokio` feature flag is enabled, a multithreaded tokio runtime will also be
+/// registered globally.
 ///
 /// ```
 /// # use neon::prelude::*;
@@ -122,6 +124,61 @@ pub use neon_macros::main;
 /// }
 /// ```
 ///
+/// ### Async Functions
+///
+/// The [`export`] macro can export `async fn`, converting to a JavaScript `Promise`, if a global
+/// future executor is registered. See [`neon::set_global_executor`](crate::set_global_executor) for
+/// more details.
+///
+/// ```
+/// # #[cfg(all(feature = "napi-6", feature = "futures"))]
+/// # {
+/// #[neon::export]
+/// async fn add(a: f64, b: f64) -> f64 {
+///     a + b
+/// }
+/// # }
+/// ```
+///
+/// A `fn` that returns a [`Future`](std::future::Future) can be annotated with `#[neon::export(async)]`
+/// if it needs to perform some setup on the JavaScript main thread before running asynchronously.
+///
+/// ```
+/// # #[cfg(all(feature = "napi-6", feature = "futures"))]
+/// # {
+/// # use std::future::Future;
+/// # use neon::prelude::*;
+/// #[neon::export(async)]
+/// fn add(a: f64, b: f64) -> impl Future<Output = f64> {
+///     println!("Hello from the JavaScript main thread!");
+///
+///     async move {
+///         a + b
+///     }
+/// }
+/// # }
+/// ```
+///
+/// If work needs to be performed on the JavaScript main thread _after_ the asynchronous operation,
+/// the [`With`](crate::types::extract::With) extractor can be used to execute a closure before returning.
+///
+/// ```
+/// # #[cfg(all(feature = "napi-6", feature = "futures"))]
+/// # {
+/// # use neon::types::extract::{TryIntoJs, With};
+/// #[neon::export]
+/// async fn add(a: f64, b: f64) -> impl for<'cx> TryIntoJs<'cx> {
+///     let sum = a + b;
+///
+///     With(move |_cx| {
+///         println!("Hello from the JavaScript main thread!");
+///
+///         sum
+///     })
+/// }
+/// # }
+/// ```
+///
 /// ### Error Handling
 ///
 /// If an exported function returns a [`Result`], a JavaScript exception will be thrown
@@ -153,15 +210,16 @@ pub use neon_macros::main;
 /// More complex functions may need to interact directly with the JavaScript runtime,
 /// for example with [`Context`](crate::context::Context) or handles to JavaScript values.
 ///
-/// Functions may optionally include a [`FunctionContext`](crate::context::FunctionContext) argument. Note
-/// that unlike functions created with [`JsFunction::new`](crate::types::JsFunction), exported function
-/// receive a borrowed context and may require explicit lifetimes.
+/// Functions may optionally include a [`Cx`](crate::context::Cx) or
+/// [`FunctionContext`](crate::context::FunctionContext) argument. Note that unlike functions
+/// created with [`JsFunction::new`](crate::types::JsFunction), exported function receive a borrowed
+/// context and may require explicit lifetimes.
 ///
 /// ```
 /// # use neon::prelude::*;
 /// #[neon::export]
 /// fn add<'cx>(
-///     cx: &mut FunctionContext<'cx>,
+///     cx: &mut Cx<'cx>,
 ///     a: Handle<JsNumber>,
 ///     b: Handle<JsNumber>,
 /// ) -> JsResult<'cx, JsNumber> {
@@ -179,19 +237,62 @@ pub use neon_macros::main;
 ///
 /// #### `context`
 ///
-/// The `#[neon::export]` macro looks checks if the first argument has a type of
-/// `&mut FunctionContext` to determine if the [`Context`](crate::context::Context)
-/// should be passed to the function.
+/// The `#[neon::export]` uses a heuristic to determine if the first argument
+/// to a function is a _context_ argument.
+///
+/// * In a function executed on the JavaScript main thread, it looks for `&mut Cx`
+///     or `&mut FunctionContext` to determine if the [`Context`](crate::context::Context)
+///     should be passed.
+/// * In a function executed on another thread, it looks for [`Channel`](crate::event::Channel).
 ///
 /// If the type has been renamed when importing, the `context` attribute can be
 /// added to force it to be passed.
 ///
 /// ```
-/// use neon::context::{FunctionContext as FnCtx};
+/// use neon::event::Channel as Ch;
+/// use neon::context::FunctionContext as FnCtx;
 ///
 /// #[neon::export(context)]
 /// fn add(_cx: &mut FnCtx, a: f64, b: f64) -> f64 {
 ///     a + b
+/// }
+///
+/// #[neon::export(context)]
+/// async fn div(_ch: Ch, a: f64, b: f64) -> f64 {
+///     a / b
+/// }
+/// ```
+///
+/// #### `this`
+///
+/// The `#[neon::export]` uses a heuristic to determine if an argument to this function is
+/// referring to [`this`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this).
+///
+/// 1. If the first argument is a [context](#context), use the 0th argument, otherwise use the 1st.
+/// 2. If the argument binding is named `this`
+/// 3. Or if it is a tuple struct pattern with an element named `this`
+///
+/// ```
+/// use neon::types::extract::Boxed;
+///
+/// #[neon::export]
+/// fn buffer_clone(this: Vec<u8>) -> Vec<u8> {
+///     this
+/// }
+///
+/// #[neon::export]
+/// fn box_to_string(Boxed(this): Boxed<String>) -> String {
+///     this
+/// }
+/// ```
+///
+/// If the function uses a variable name other than `this`, the `this` attribute may
+/// be added.
+///
+/// ```
+/// #[neon::export(this)]
+/// fn buffer_clone(me: Vec<u8>) -> Vec<u8> {
+///     me
 /// }
 /// ```
 pub use neon_macros::export;

@@ -242,7 +242,7 @@ impl<T: Finalize + 'static> JsBox<T> {
         // contained value `T`.
         fn finalizer<U: Finalize + 'static>(env: raw::Env, data: BoxAny) {
             let data = *data.downcast::<U>().unwrap();
-            let env = unsafe { std::mem::transmute(env) };
+            let env = Env::from(env);
 
             Cx::with_context(env, move |mut cx| data.finalize(&mut cx));
         }
@@ -293,18 +293,10 @@ impl<T: 'static> Deref for JsBox<T> {
 ///
 /// impl Finalize for Point {
 ///     fn finalize<'a, C: Context<'a>>(self, cx: &mut C) {
-///         let global = cx.global_object();
-///         let emit: Handle<JsFunction> = global
-///             .get(cx, "emit")
-///             .unwrap();
-///
-///         let args = vec![
-///             cx.string("gc_point").upcast::<JsValue>(),
-///             cx.number(self.0).upcast(),
-///             cx.number(self.1).upcast(),
-///         ];
-///
-///         emit.call(cx, global, args).unwrap();
+///         cx.global_object()
+///             .method(cx.cx_mut(), "emit").unwrap()
+///             .args(("gc_point", self.0, self.1)).unwrap()
+///             .exec().unwrap();
 ///     }
 /// }
 /// ```
